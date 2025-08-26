@@ -5,7 +5,7 @@
 
 `default_nettype none
 
-module tt_um_example (
+module tt_um_fibo_blink (
     input  wire [7:0] ui_in,    // Dedicated inputs
     output wire [7:0] uo_out,   // Dedicated outputs
     input  wire [7:0] uio_in,   // IOs: Input path
@@ -16,12 +16,194 @@ module tt_um_example (
     input  wire       rst_n     // reset_n - low to reset
 );
 
-  // All output pins must be assigned. If not used, assign to 0.
-  assign uo_out  = ui_in + uio_in;  // Example: ou_out is the sum of ui_in and uio_in
-  assign uio_out = 0;
-  assign uio_oe  = 0;
-
-  // List all unused inputs to prevent warnings
-  wire _unused = &{ena, clk, rst_n, 1'b0};
+    // Input Configuration
+    wire [1:0] sequence_select = ui_in[1:0];  // 00=Fibo, 01=Prime, 10=Square, 11=Triangular
+    wire [2:0] speed_control = ui_in[4:2];    // Speed multiplier (0=slowest, 7=fastest)
+    wire reset_sequence = ui_in[5];           // Reset sequence to beginning
+    wire enable_output = ui_in[6];            // Enable/disable LED output
+    
+    // Internal Registers
+    reg [31:0] counter;                       // Main timing counter
+    reg [15:0] current_number;                // Current number in sequence
+    reg [15:0] next_number;                   // Next number for Fibonacci
+    reg [15:0] sequence_index;                // Index in current sequence
+    reg [31:0] target_delay;                  // Target delay for current number
+    reg [31:0] delay_counter;                 // Delay counter
+    reg led_output;                           // LED output state
+    reg sequence_active;                      // Sequence is running
+    
+    // Fibonacci Generator Registers[313][314]
+    reg [15:0] fib_a, fib_b;                 // Fibonacci sequence registers
+    
+    // Prime Checker Registers
+    reg [15:0] prime_candidate;              // Current number to check for primality
+    reg [15:0] prime_divisor;                // Current divisor for prime checking
+    reg is_prime;                            // Prime check result
+    reg prime_check_active;                  // Prime checking in progress
+    
+    // Perfect Square Generator
+    reg [7:0] square_root;                   // Square root for perfect squares
+    
+    // Triangular Number Generator  
+    reg [15:0] triangular_n;                 // Current n for triangular numbers
+    
+    // Speed Control - Create base timing
+    reg [23:0] base_counter;                 // Base timing counter
+    wire timing_tick;
+    
+    // Base timing generator (adjustable speed)
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            base_counter <= 24'b0;
+        end else if (ena) begin
+            case (speed_control)
+                3'b000: base_counter <= base_counter + 1;      // Slowest
+                3'b001: base_counter <= base_counter + 2;      // 2x speed
+                3'b010: base_counter <= base_counter + 4;      // 4x speed
+                3'b011: base_counter <= base_counter + 8;      // 8x speed
+                3'b100: base_counter <= base_counter + 16;     // 16x speed
+                3'b101: base_counter <= base_counter + 32;     // 32x speed
+                3'b110: base_counter <= base_counter + 64;     // 64x speed
+                3'b111: base_counter <= base_counter + 128;    // Fastest
+            endcase
+        end
+    end
+    
+    assign timing_tick = base_counter[23];  // Use MSB as timing tick
+    
+    // Main Sequence Controller
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            // Reset all state
+            current_number <= 16'd1;
+            next_number <= 16'd1;
+            sequence_index <= 16'd0;
+            target_delay <= 32'd100000;  // Initial delay
+            delay_counter <= 32'd0;
+            led_output <= 1'b0;
+            sequence_active <= 1'b1;
+            
+            // Fibonacci initialization[313][314]
+            fib_a <= 16'd0;
+            fib_b <= 16'd1;
+            
+            // Prime checker initialization
+            prime_candidate <= 16'd2;
+            is_prime <= 1'b1;
+            prime_check_active <= 1'b0;
+            
+            // Perfect square initialization
+            square_root <= 8'd1;
+            
+            // Triangular number initialization
+            triangular_n <= 16'd1;
+            
+        end else if (ena) begin
+            
+            // Handle sequence reset
+            if (reset_sequence) begin
+                current_number <= 16'd1;
+                sequence_index <= 16'd0;
+                delay_counter <= 32'd0;
+                led_output <= 1'b0;
+                
+                case (sequence_select)
+                    2'b00: begin // Fibonacci reset
+                        fib_a <= 16'd0;
+                        fib_b <= 16'd1;
+                        current_number <= 16'd1;
+                    end
+                    2'b01: begin // Prime reset
+                        prime_candidate <= 16'd2;
+                        current_number <= 16'd2;
+                    end
+                    2'b10: begin // Perfect square reset
+                        square_root <= 8'd1;
+                        current_number <= 16'd1;
+                    end
+                    2'b11: begin // Triangular reset
+                        triangular_n <= 16'd1;
+                        current_number <= 16'd1;
+                    end
+                endcase
+            end else if (sequence_active && timing_tick) begin
+                
+                // Update delay counter
+                if (delay_counter < target_delay) begin
+                    delay_counter <= delay_counter + 1;
+                end else begin
+                    // Time to move to next number in sequence
+                    delay_counter <= 32'd0;
+                    led_output <= ~led_output;  // Toggle LED
+                    
+                    // Generate next number based on sequence type
+                    case (sequence_select)
+                        2'b00: begin // Fibonacci Sequence[313][314]
+                            fib_a <= fib_b;
+                            fib_b <= fib_a + fib_b;
+                            current_number <= fib_b;
+                            target_delay <= {16'd0, fib_b};  // Delay = Fibonacci number
+                        end
+                        
+                        2'b01: begin // Prime Numbers
+                            // Simple prime generation (not optimal but works for demonstration)
+                            prime_candidate <= prime_candidate + 1;
+                            // For simplicity, use a basic prime check
+                            if (is_next_prime(prime_candidate + 1)) begin
+                                current_number <= prime_candidate + 1;
+                                target_delay <= {16'd0, prime_candidate + 1};
+                            end
+                        end
+                        
+                        2'b10: begin // Perfect Squares (1, 4, 9, 16, 25...)
+                            square_root <= square_root + 1;
+                            current_number <= (square_root + 1) * (square_root + 1);
+                            target_delay <= (square_root + 1) * (square_root + 1);
+                        end
+                        
+                        2'b11: begin // Triangular Numbers (1, 3, 6, 10, 15...)
+                            triangular_n <= triangular_n + 1;
+                            current_number <= (triangular_n + 1) * (triangular_n + 2) / 2;
+                            target_delay <= (triangular_n + 1) * (triangular_n + 2) / 2;
+                        end
+                    endcase
+                    
+                    sequence_index <= sequence_index + 1;
+                end
+            end
+        end
+    end
+    
+    // Simple prime checker function (for demonstration)
+    function is_next_prime;
+        input [15:0] n;
+        reg [15:0] i;
+        begin
+            is_next_prime = 1'b1;
+            if (n < 2) is_next_prime = 1'b0;
+            else if (n == 2) is_next_prime = 1'b1;
+            else if (n[0] == 0) is_next_prime = 1'b0;  // Even numbers > 2 are not prime
+            else begin
+                // Simple trial division (limited for hardware efficiency)
+                for (i = 3; i * i <= n && i < 16; i = i + 2) begin
+                    if ((n % i) == 0) is_next_prime = 1'b0;
+                end
+            end
+        end
+    endfunction
+    
+    // Output Assignments
+    assign uo_out[0] = enable_output ? led_output : 1'b0;  // Main LED output
+    assign uo_out[1] = timing_tick;                        // Timing reference
+    assign uo_out[2] = sequence_active;                    // Sequence active indicator
+    assign uo_out[3] = (delay_counter == 0);               // New number pulse
+    assign uo_out[7:4] = current_number[3:0];             // Lower 4 bits of current number
+    
+    // Bidirectional pins - output current sequence information
+    assign uio_out[7:0] = current_number[15:8];           // Upper 8 bits of current number
+    assign uio_oe = 8'hFF;                                // All bidirectional pins as outputs
+    
+    // List all unused inputs to prevent warnings
+    wire _unused = &{uio_in, ui_in[7], 1'b0};
 
 endmodule
