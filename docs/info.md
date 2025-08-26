@@ -223,6 +223,4 @@ Toggle Switch (ui_in): Enable/disable output[13]
 | **Enable** | ui_in[13] | Toggle switch | Output enable/disable |
 
 FiboBlink transforms abstract mathematical concepts into tangible, observable phenomena, making it perfect for education, demonstration, and anyone who wants to **see mathematics in action**.
-[11](https://vlsiverify.com/verilog/verilog-project-ideas/)
-[12](https://takeoffprojects.com/page/blog/verilog-projects-for-ece)
-[13](https://www.youtube.com/watch?v=f95Qanovx_c)
+
