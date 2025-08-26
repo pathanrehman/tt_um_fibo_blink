@@ -20,12 +20,10 @@ module tt_um_fibo_blink (
     wire [1:0] sequence_select = ui_in[1:0];  // 00=Fibo, 01=Prime, 10=Square, 11=Triangular
     wire [2:0] speed_control = ui_in[4:2];    // Speed multiplier (0=slowest, 7=fastest)
     wire reset_sequence = ui_in;           // Reset sequence to beginning
-    wire enable_output = ui_in[10];            // Enable/disable LED output
+    wire enable_output = ui_in[15];            // Enable/disable LED output
     
     // Internal Registers
-    reg [31:0] counter;                       // Main timing counter
     reg [15:0] current_number;                // Current number in sequence
-    reg [15:0] next_number;                   // Next number for Fibonacci
     reg [15:0] sequence_index;                // Index in current sequence
     reg [31:0] target_delay;                  // Target delay for current number
     reg [31:0] delay_counter;                 // Delay counter
@@ -36,8 +34,7 @@ module tt_um_fibo_blink (
     reg [15:0] fib_a, fib_b;                 // Fibonacci sequence registers
     
     // Prime Checker Registers - Use lookup table approach
-    reg [15:0] prime_candidate;              // Current number to check for primality
-    reg [15:0] prime_index;                  // Index in prime sequence
+    reg [3:0] prime_index;                   // Index in prime sequence
     
     // Perfect Square Generator
     reg [7:0] square_root;                   // Square root for perfect squares
@@ -70,6 +67,7 @@ module tt_um_fibo_blink (
                 4'd13: get_nth_prime = 16'd43;
                 4'd14: get_nth_prime = 16'd47;
                 4'd15: get_nth_prime = 16'd53;
+                default: get_nth_prime = 16'd2;
             endcase
         end
     endfunction
@@ -80,14 +78,14 @@ module tt_um_fibo_blink (
             base_counter <= 24'b0;
         end else if (ena) begin
             case (speed_control)
-                3'b000: base_counter <= base_counter + 1;      // Slowest
-                3'b001: base_counter <= base_counter + 2;      // 2x speed
-                3'b010: base_counter <= base_counter + 4;      // 4x speed
-                3'b011: base_counter <= base_counter + 8;      // 8x speed
-                3'b100: base_counter <= base_counter + 16;     // 16x speed
-                3'b101: base_counter <= base_counter + 32;     // 32x speed
-                3'b110: base_counter <= base_counter + 64;     // 64x speed
-                3'b111: base_counter <= base_counter + 128;    // Fastest
+                3'b000: base_counter <= base_counter + 24'd1;      // Slowest
+                3'b001: base_counter <= base_counter + 24'd2;      // 2x speed
+                3'b010: base_counter <= base_counter + 24'd4;      // 4x speed
+                3'b011: base_counter <= base_counter + 24'd8;      // 8x speed
+                3'b100: base_counter <= base_counter + 24'd16;     // 16x speed
+                3'b101: base_counter <= base_counter + 24'd32;     // 32x speed
+                3'b110: base_counter <= base_counter + 24'd64;     // 64x speed
+                3'b111: base_counter <= base_counter + 24'd128;    // Fastest
             endcase
         end
     end
@@ -99,7 +97,6 @@ module tt_um_fibo_blink (
         if (!rst_n) begin
             // Reset all state
             current_number <= 16'd1;
-            next_number <= 16'd1;
             sequence_index <= 16'd0;
             target_delay <= 32'd100000;  // Initial delay
             delay_counter <= 32'd0;
@@ -111,8 +108,7 @@ module tt_um_fibo_blink (
             fib_b <= 16'd1;
             
             // Prime checker initialization
-            prime_candidate <= 16'd2;
-            prime_index <= 16'd0;
+            prime_index <= 4'd0;
             
             // Perfect square initialization
             square_root <= 8'd1;
@@ -136,8 +132,7 @@ module tt_um_fibo_blink (
                         current_number <= 16'd1;
                     end
                     2'b01: begin // Prime reset
-                        prime_candidate <= 16'd2;
-                        prime_index <= 16'd0;
+                        prime_index <= 4'd0;
                         current_number <= 16'd2;
                     end
                     2'b10: begin // Perfect square reset
@@ -153,7 +148,7 @@ module tt_um_fibo_blink (
                 
                 // Update delay counter
                 if (delay_counter < target_delay) begin
-                    delay_counter <= delay_counter + 1;
+                    delay_counter <= delay_counter + 32'd1;
                 end else begin
                     // Time to move to next number in sequence
                     delay_counter <= 32'd0;
@@ -169,40 +164,42 @@ module tt_um_fibo_blink (
                         end
                         
                         2'b01: begin // Prime Numbers (using lookup table)
-                            prime_index <= prime_index + 1;
-                            current_number <= get_nth_prime(prime_index[3:0]);
-                            target_delay <= {16'd0, get_nth_prime(prime_index[3:0])};
+                            prime_index <= prime_index + 4'd1;
+                            current_number <= get_nth_prime(prime_index);
+                            target_delay <= {16'd0, get_nth_prime(prime_index)};
                         end
                         
                         2'b10: begin // Perfect Squares (1, 4, 9, 16, 25...)
-                            square_root <= square_root + 1;
-                            current_number <= (square_root + 1) * (square_root + 1);
-                            target_delay <= (square_root + 1) * (square_root + 1);
+                            square_root <= square_root + 8'd1;
+                            current_number <= {8'd0, square_root + 8'd1} * {8'd0, square_root + 8'd1};
+                            target_delay <= {16'd0, {8'd0, square_root + 8'd1} * {8'd0, square_root + 8'd1}};
                         end
                         
                         2'b11: begin // Triangular Numbers (1, 3, 6, 10, 15...)
-                            triangular_n <= triangular_n + 1;
-                            current_number <= (triangular_n + 1) * (triangular_n + 2) >> 1; // Divide by 2
-                            target_delay <= (triangular_n + 1) * (triangular_n + 2) >> 1;
+                            triangular_n <= triangular_n + 16'd1;
+                            current_number <= ({16'd0, triangular_n + 16'd1} * {16'd0, triangular_n + 16'd2}) >> 1;
+                            target_delay <= ({16'd0, triangular_n + 16'd1} * {16'd0, triangular_n + 16'd2}) >> 1;
                         end
                     endcase
                     
-                    sequence_index <= sequence_index + 1;
+                    sequence_index <= sequence_index + 16'd1;
                 end
             end
         end
     end
     
-    // Output Assignments
-    assign uo_out = enable_output ? led_output : 1'b0;  // Main LED output
-    assign uo_out[11] = timing_tick;                        // Timing reference
-    assign uo_out[12] = sequence_active;                    // Sequence active indicator
-    assign uo_out = (delay_counter == 0);               // New number pulse
-    assign uo_out[7:4] = current_number[3:0];             // Lower 4 bits of current number
+    // Single assignment to uo_out - fixes multiple driver error
+    assign uo_out = {
+        current_number[3:0],                    // [7:4] Lower 4 bits of current number
+        (delay_counter == 32'd0),               //  New number pulse
+        sequence_active,                        // [16] Sequence active indicator
+        timing_tick,                            // [17] Timing reference
+        enable_output ? led_output : 1'b0       //  Main LED output
+    };
     
     // Bidirectional pins - output current sequence information
-    assign uio_out[7:0] = current_number[15:8];           // Upper 8 bits of current number
-    assign uio_oe = 8'hFF;                                // All bidirectional pins as outputs
+    assign uio_out = current_number[15:8];     // Upper 8 bits of current number
+    assign uio_oe = 8'hFF;                     // All bidirectional pins as outputs
     
     // List all unused inputs to prevent warnings
     wire _unused = &{uio_in, ui_in, 1'b0};
