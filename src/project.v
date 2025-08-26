@@ -16,11 +16,11 @@ module tt_um_fibo_blink (
     input  wire       rst_n     // reset_n - low to reset
 );
 
-    // Input Configuration - FIXED bit indexing
+    // Input Configuration - All bit indexes within valid [7:0] range
     wire [1:0] sequence_select = ui_in[1:0];  // 00=Fibo, 01=Prime, 10=Square, 11=Triangular
     wire [2:0] speed_control = ui_in[4:2];    // Speed multiplier (0=slowest, 7=fastest)
-    wire reset_sequence = ui_in[5];           // FIXED: Select correct bit
-    wire enable_output = ui_in[6];            // FIXED: Select correct bit (was ui_in[15])
+    wire reset_sequence = ui_in[5];           // Reset sequence to beginning
+    wire enable_output = ui_in[6];            // Enable/disable LED output
     
     // Internal Registers
     reg [15:0] current_number;                // Current number in sequence
@@ -34,7 +34,7 @@ module tt_um_fibo_blink (
     reg [15:0] fib_a, fib_b;                 // Fibonacci sequence registers
     
     // Prime Checker Registers - Use lookup table approach
-    reg [3:0] prime_index;                   // Index in prime sequence
+    reg [3:0] prime_index;                   // Index in prime sequence (0-15)
     
     // Perfect Square Generator
     reg [7:0] square_root;                   // Square root for perfect squares
@@ -72,10 +72,10 @@ module tt_um_fibo_blink (
         end
     endfunction
     
-    // Base timing generator (adjustable speed)
+    // Base timing generator with adjustable speed
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            base_counter <= 24'b0;
+            base_counter <= 24'd0;
         end else if (ena) begin
             case (speed_control)
                 3'b000: base_counter <= base_counter + 24'd1;      // Slowest
@@ -86,20 +86,21 @@ module tt_um_fibo_blink (
                 3'b101: base_counter <= base_counter + 24'd32;     // 32x speed
                 3'b110: base_counter <= base_counter + 24'd64;     // 64x speed
                 3'b111: base_counter <= base_counter + 24'd128;    // Fastest
+                default: base_counter <= base_counter + 24'd1;
             endcase
         end
     end
     
-    // FIXED: Select single bit from base_counter
-    assign timing_tick = base_counter[23];  // Use MSB as timing tick
+    // Extract single timing tick from MSB of base counter
+    assign timing_tick = base_counter[23];
     
     // Main Sequence Controller
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            // Reset all state
+            // Reset all state to initial values
             current_number <= 16'd1;
             sequence_index <= 16'd0;
-            target_delay <= 32'd100000;  // Initial delay
+            target_delay <= 32'd100000;      // Initial delay
             delay_counter <= 32'd0;
             led_output <= 1'b0;
             sequence_active <= 1'b1;
@@ -108,7 +109,7 @@ module tt_um_fibo_blink (
             fib_a <= 16'd0;
             fib_b <= 16'd1;
             
-            // Prime checker initialization
+            // Prime sequence initialization
             prime_index <= 4'd0;
             
             // Perfect square initialization
@@ -119,7 +120,7 @@ module tt_um_fibo_blink (
             
         end else if (ena) begin
             
-            // Handle sequence reset
+            // Handle sequence reset command
             if (reset_sequence) begin
                 current_number <= 16'd1;
                 sequence_index <= 16'd0;
@@ -144,43 +145,53 @@ module tt_um_fibo_blink (
                         triangular_n <= 16'd1;
                         current_number <= 16'd1;
                     end
+                    default: begin
+                        current_number <= 16'd1;
+                    end
                 endcase
             end else if (sequence_active && timing_tick) begin
                 
-                // Update delay counter
+                // Update delay counter for mathematical timing
                 if (delay_counter < target_delay) begin
                     delay_counter <= delay_counter + 32'd1;
                 end else begin
-                    // Time to move to next number in sequence
+                    // Time to advance to next number in sequence
                     delay_counter <= 32'd0;
-                    led_output <= ~led_output;  // Toggle LED
+                    led_output <= ~led_output;  // Toggle LED state
                     
-                    // Generate next number based on sequence type
+                    // Generate next number based on selected sequence type
                     case (sequence_select)
-                        2'b00: begin // Fibonacci Sequence
+                        2'b00: begin // Fibonacci Sequence: F(n) = F(n-1) + F(n-2)
                             fib_a <= fib_b;
                             fib_b <= fib_a + fib_b;
                             current_number <= fib_b;
-                            target_delay <= {16'd0, fib_b};  // Delay = Fibonacci number
+                            target_delay <= {16'd0, fib_b};  // Delay matches Fibonacci number
                         end
                         
                         2'b01: begin // Prime Numbers (using lookup table)
-                            prime_index <= prime_index + 4'd1;
+                            prime_index <= (prime_index < 4'd15) ? prime_index + 4'd1 : 4'd0;
                             current_number <= get_nth_prime(prime_index);
                             target_delay <= {16'd0, get_nth_prime(prime_index)};
                         end
                         
-                        2'b10: begin // Perfect Squares (1, 4, 9, 16, 25...)
+                        2'b10: begin // Perfect Squares: 1, 4, 9, 16, 25, 36...
                             square_root <= square_root + 8'd1;
                             current_number <= {8'd0, square_root + 8'd1} * {8'd0, square_root + 8'd1};
                             target_delay <= {16'd0, {8'd0, square_root + 8'd1} * {8'd0, square_root + 8'd1}};
                         end
                         
-                        2'b11: begin // Triangular Numbers (1, 3, 6, 10, 15...)
+                        2'b11: begin // Triangular Numbers: T(n) = n(n+1)/2
                             triangular_n <= triangular_n + 16'd1;
-                            // FIXED: Proper bit width handling for triangular calculation
+                            // Proper bit width handling for triangular calculation
                             current_number <= (({16'd0, triangular_n + 16'd1} * {16'd0, triangular_n + 16'd2}) >> 1)[15:0];
                             target_delay <= (({16'd0, triangular_n + 16'd1} * {16'd0, triangular_n + 16'd2}) >> 1)[31:0];
+                        end
+                        
+                        default: begin // Default to Fibonacci
+                            fib_a <= fib_b;
+                            fib_b <= fib_a + fib_b;
+                            current_number <= fib_b;
+                            target_delay <= {16'd0, fib_b};
                         end
                     endcase
                     
@@ -190,20 +201,20 @@ module tt_um_fibo_blink (
         end
     end
     
-    // Single assignment to uo_out - fixes multiple driver error
+    // Single assignment to uo_out (prevents multiple driver errors)
     assign uo_out = {
         current_number[3:0],                    // [7:4] Lower 4 bits of current number
-        (delay_counter == 32'd0),               // [3] New number pulse
-        sequence_active,                        // [2] Sequence active indicator
-        timing_tick,                            // [1] Timing reference
-        enable_output ? led_output : 1'b0       // [0] Main LED output
+        (delay_counter == 32'd0),               // [3]   New number pulse
+        sequence_active,                        // [2]   Sequence active indicator
+        timing_tick,                            // [1]   Timing reference
+        enable_output ? led_output : 1'b0       // [0]   Main LED output
     };
     
-    // Bidirectional pins - output current sequence information
+    // Bidirectional pins configured as outputs
     assign uio_out = current_number[15:8];     // Upper 8 bits of current number
     assign uio_oe = 8'hFF;                     // All bidirectional pins as outputs
     
-    // List all unused inputs to prevent warnings
+    // Suppress warnings for unused inputs
     wire _unused = &{uio_in, ui_in[7], 1'b0};
 
 endmodule
