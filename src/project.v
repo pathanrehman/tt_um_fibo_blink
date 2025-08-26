@@ -19,8 +19,8 @@ module tt_um_fibo_blink (
     // Input Configuration
     wire [1:0] sequence_select = ui_in[1:0];  // 00=Fibo, 01=Prime, 10=Square, 11=Triangular
     wire [2:0] speed_control = ui_in[4:2];    // Speed multiplier (0=slowest, 7=fastest)
-    wire reset_sequence = ui_in[5];           // Reset sequence to beginning
-    wire enable_output = ui_in[6];            // Enable/disable LED output
+    wire reset_sequence = ui_in;           // Reset sequence to beginning
+    wire enable_output = ui_in[10];            // Enable/disable LED output
     
     // Internal Registers
     reg [31:0] counter;                       // Main timing counter
@@ -32,14 +32,12 @@ module tt_um_fibo_blink (
     reg led_output;                           // LED output state
     reg sequence_active;                      // Sequence is running
     
-    // Fibonacci Generator Registers[313][314]
+    // Fibonacci Generator Registers
     reg [15:0] fib_a, fib_b;                 // Fibonacci sequence registers
     
-    // Prime Checker Registers
+    // Prime Checker Registers - Use lookup table approach
     reg [15:0] prime_candidate;              // Current number to check for primality
-    reg [15:0] prime_divisor;                // Current divisor for prime checking
-    reg is_prime;                            // Prime check result
-    reg prime_check_active;                  // Prime checking in progress
+    reg [15:0] prime_index;                  // Index in prime sequence
     
     // Perfect Square Generator
     reg [7:0] square_root;                   // Square root for perfect squares
@@ -50,6 +48,31 @@ module tt_um_fibo_blink (
     // Speed Control - Create base timing
     reg [23:0] base_counter;                 // Base timing counter
     wire timing_tick;
+    
+    // Prime lookup table for first 16 primes (synthesis-friendly)
+    function [15:0] get_nth_prime;
+        input [3:0] index;
+        begin
+            case (index)
+                4'd0:  get_nth_prime = 16'd2;
+                4'd1:  get_nth_prime = 16'd3;
+                4'd2:  get_nth_prime = 16'd5;
+                4'd3:  get_nth_prime = 16'd7;
+                4'd4:  get_nth_prime = 16'd11;
+                4'd5:  get_nth_prime = 16'd13;
+                4'd6:  get_nth_prime = 16'd17;
+                4'd7:  get_nth_prime = 16'd19;
+                4'd8:  get_nth_prime = 16'd23;
+                4'd9:  get_nth_prime = 16'd29;
+                4'd10: get_nth_prime = 16'd31;
+                4'd11: get_nth_prime = 16'd37;
+                4'd12: get_nth_prime = 16'd41;
+                4'd13: get_nth_prime = 16'd43;
+                4'd14: get_nth_prime = 16'd47;
+                4'd15: get_nth_prime = 16'd53;
+            endcase
+        end
+    endfunction
     
     // Base timing generator (adjustable speed)
     always @(posedge clk or negedge rst_n) begin
@@ -69,7 +92,7 @@ module tt_um_fibo_blink (
         end
     end
     
-    assign timing_tick = base_counter[23];  // Use MSB as timing tick
+    assign timing_tick = base_counter;  // Use MSB as timing tick
     
     // Main Sequence Controller
     always @(posedge clk or negedge rst_n) begin
@@ -83,14 +106,13 @@ module tt_um_fibo_blink (
             led_output <= 1'b0;
             sequence_active <= 1'b1;
             
-            // Fibonacci initialization[313][314]
+            // Fibonacci initialization
             fib_a <= 16'd0;
             fib_b <= 16'd1;
             
             // Prime checker initialization
             prime_candidate <= 16'd2;
-            is_prime <= 1'b1;
-            prime_check_active <= 1'b0;
+            prime_index <= 16'd0;
             
             // Perfect square initialization
             square_root <= 8'd1;
@@ -115,6 +137,7 @@ module tt_um_fibo_blink (
                     end
                     2'b01: begin // Prime reset
                         prime_candidate <= 16'd2;
+                        prime_index <= 16'd0;
                         current_number <= 16'd2;
                     end
                     2'b10: begin // Perfect square reset
@@ -138,21 +161,17 @@ module tt_um_fibo_blink (
                     
                     // Generate next number based on sequence type
                     case (sequence_select)
-                        2'b00: begin // Fibonacci Sequence[313][314]
+                        2'b00: begin // Fibonacci Sequence
                             fib_a <= fib_b;
                             fib_b <= fib_a + fib_b;
                             current_number <= fib_b;
                             target_delay <= {16'd0, fib_b};  // Delay = Fibonacci number
                         end
                         
-                        2'b01: begin // Prime Numbers
-                            // Simple prime generation (not optimal but works for demonstration)
-                            prime_candidate <= prime_candidate + 1;
-                            // For simplicity, use a basic prime check
-                            if (is_next_prime(prime_candidate + 1)) begin
-                                current_number <= prime_candidate + 1;
-                                target_delay <= {16'd0, prime_candidate + 1};
-                            end
+                        2'b01: begin // Prime Numbers (using lookup table)
+                            prime_index <= prime_index + 1;
+                            current_number <= get_nth_prime(prime_index[3:0]);
+                            target_delay <= {16'd0, get_nth_prime(prime_index[3:0])};
                         end
                         
                         2'b10: begin // Perfect Squares (1, 4, 9, 16, 25...)
@@ -163,8 +182,8 @@ module tt_um_fibo_blink (
                         
                         2'b11: begin // Triangular Numbers (1, 3, 6, 10, 15...)
                             triangular_n <= triangular_n + 1;
-                            current_number <= (triangular_n + 1) * (triangular_n + 2) / 2;
-                            target_delay <= (triangular_n + 1) * (triangular_n + 2) / 2;
+                            current_number <= (triangular_n + 1) * (triangular_n + 2) >> 1; // Divide by 2
+                            target_delay <= (triangular_n + 1) * (triangular_n + 2) >> 1;
                         end
                     endcase
                     
@@ -174,29 +193,11 @@ module tt_um_fibo_blink (
         end
     end
     
-    // Simple prime checker function (for demonstration)
-    function is_next_prime;
-        input [15:0] n;
-        reg [15:0] i;
-        begin
-            is_next_prime = 1'b1;
-            if (n < 2) is_next_prime = 1'b0;
-            else if (n == 2) is_next_prime = 1'b1;
-            else if (n[0] == 0) is_next_prime = 1'b0;  // Even numbers > 2 are not prime
-            else begin
-                // Simple trial division (limited for hardware efficiency)
-                for (i = 3; i * i <= n && i < 16; i = i + 2) begin
-                    if ((n % i) == 0) is_next_prime = 1'b0;
-                end
-            end
-        end
-    endfunction
-    
     // Output Assignments
-    assign uo_out[0] = enable_output ? led_output : 1'b0;  // Main LED output
-    assign uo_out[1] = timing_tick;                        // Timing reference
-    assign uo_out[2] = sequence_active;                    // Sequence active indicator
-    assign uo_out[3] = (delay_counter == 0);               // New number pulse
+    assign uo_out = enable_output ? led_output : 1'b0;  // Main LED output
+    assign uo_out[11] = timing_tick;                        // Timing reference
+    assign uo_out[12] = sequence_active;                    // Sequence active indicator
+    assign uo_out = (delay_counter == 0);               // New number pulse
     assign uo_out[7:4] = current_number[3:0];             // Lower 4 bits of current number
     
     // Bidirectional pins - output current sequence information
@@ -204,6 +205,6 @@ module tt_um_fibo_blink (
     assign uio_oe = 8'hFF;                                // All bidirectional pins as outputs
     
     // List all unused inputs to prevent warnings
-    wire _unused = &{uio_in, ui_in[7], 1'b0};
+    wire _unused = &{uio_in, ui_in, 1'b0};
 
 endmodule
