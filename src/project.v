@@ -16,11 +16,11 @@ module tt_um_fibo_blink (
     input  wire       rst_n     // reset_n - low to reset
 );
 
-    // Input Configuration
+    // Input Configuration - FIXED bit indexing
     wire [1:0] sequence_select = ui_in[1:0];  // 00=Fibo, 01=Prime, 10=Square, 11=Triangular
     wire [2:0] speed_control = ui_in[4:2];    // Speed multiplier (0=slowest, 7=fastest)
-    wire reset_sequence = ui_in;           // Reset sequence to beginning
-    wire enable_output = ui_in[15];            // Enable/disable LED output
+    wire reset_sequence = ui_in[5];           // FIXED: Select correct bit
+    wire enable_output = ui_in[6];            // FIXED: Select correct bit (was ui_in[15])
     
     // Internal Registers
     reg [15:0] current_number;                // Current number in sequence
@@ -90,7 +90,8 @@ module tt_um_fibo_blink (
         end
     end
     
-    assign timing_tick = base_counter;  // Use MSB as timing tick
+    // FIXED: Select single bit from base_counter
+    assign timing_tick = base_counter[23];  // Use MSB as timing tick
     
     // Main Sequence Controller
     always @(posedge clk or negedge rst_n) begin
@@ -177,8 +178,9 @@ module tt_um_fibo_blink (
                         
                         2'b11: begin // Triangular Numbers (1, 3, 6, 10, 15...)
                             triangular_n <= triangular_n + 16'd1;
-                            current_number <= ({16'd0, triangular_n + 16'd1} * {16'd0, triangular_n + 16'd2}) >> 1;
-                            target_delay <= ({16'd0, triangular_n + 16'd1} * {16'd0, triangular_n + 16'd2}) >> 1;
+                            // FIXED: Proper bit width handling for triangular calculation
+                            current_number <= (({16'd0, triangular_n + 16'd1} * {16'd0, triangular_n + 16'd2}) >> 1)[15:0];
+                            target_delay <= (({16'd0, triangular_n + 16'd1} * {16'd0, triangular_n + 16'd2}) >> 1)[31:0];
                         end
                     endcase
                     
@@ -191,10 +193,10 @@ module tt_um_fibo_blink (
     // Single assignment to uo_out - fixes multiple driver error
     assign uo_out = {
         current_number[3:0],                    // [7:4] Lower 4 bits of current number
-        (delay_counter == 32'd0),               //  New number pulse
-        sequence_active,                        // [16] Sequence active indicator
-        timing_tick,                            // [17] Timing reference
-        enable_output ? led_output : 1'b0       //  Main LED output
+        (delay_counter == 32'd0),               // [3] New number pulse
+        sequence_active,                        // [2] Sequence active indicator
+        timing_tick,                            // [1] Timing reference
+        enable_output ? led_output : 1'b0       // [0] Main LED output
     };
     
     // Bidirectional pins - output current sequence information
@@ -202,6 +204,6 @@ module tt_um_fibo_blink (
     assign uio_oe = 8'hFF;                     // All bidirectional pins as outputs
     
     // List all unused inputs to prevent warnings
-    wire _unused = &{uio_in, ui_in, 1'b0};
+    wire _unused = &{uio_in, ui_in[7], 1'b0};
 
 endmodule
